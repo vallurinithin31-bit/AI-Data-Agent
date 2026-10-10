@@ -3,11 +3,17 @@ from pathlib import Path
 from pydantic import BaseModel
 from typing import List
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
-DATA_DIR = BASE_DIR / "data"
+if os.environ.get("VERCEL"):
+    BASE_DIR = Path("/tmp")
+    DATA_DIR = BASE_DIR / "data"
+    REPORTS_DIR = BASE_DIR / "reports"
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+    DATA_DIR = BASE_DIR / "data"
+    REPORTS_DIR = BASE_DIR / "reports"
+
 UPLOAD_DIR = DATA_DIR / "uploads"
 SAMPLE_DIR = DATA_DIR / "samples"
-REPORTS_DIR = BASE_DIR / "reports"
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 SAMPLE_DIR.mkdir(parents=True, exist_ok=True)
