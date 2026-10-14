@@ -47,3 +47,7 @@ Thumbs.db
 
 .vercel
 .env*
+
+# Local data and uploads
+data/
+*.meta.json

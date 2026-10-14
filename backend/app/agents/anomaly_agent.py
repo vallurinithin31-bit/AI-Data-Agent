@@ -1,8 +1,8 @@
 import uuid
+from typing import Optional, List, Dict, Any, Tuple
 import pandas as pd
 import numpy as np
-from typing import Optional, List, Dict, Any, Tuple
-from sklearn.ensemble import IsolationForest
+
 from backend.app.schemas.analysis import AnomalyResult, AnomalyItem
 
 def detect_anomalies(df: pd.DataFrame, metric_col: Optional[str] = None, id_col: Optional[str] = None) -> AnomalyResult:
@@ -37,6 +37,7 @@ def detect_anomalies(df: pd.DataFrame, metric_col: Optional[str] = None, id_col:
         raise ValueError(f"Insufficient samples ({len(series)}) for anomaly detection (minimum 10 required).")
 
     mean_val = float(series.mean())
+    median_val = float(series.median())
     std_val = float(series.std()) if len(series) > 1 else 1.0
     if std_val == 0:
         std_val = 1.0
@@ -45,28 +46,33 @@ def detect_anomalies(df: pd.DataFrame, metric_col: Optional[str] = None, id_col:
     q75 = float(series.quantile(0.75))
     iqr = q75 - q25
 
-    # Isolation Forest on metric
-    iso = IsolationForest(contamination=0.03, random_state=42)
-    iso_preds = iso.fit_predict(series.values.reshape(-1, 1))
+    # Median Absolute Deviation (MAD) for robust modified Z-Score
+    deviations = np.abs(series.values - median_val)
+    mad = float(np.median(deviations))
+    if mad == 0:
+        mad = std_val * 0.6745 if std_val > 0 else 1.0
 
     anomalies: List[AnomalyItem] = []
-    methods_used = ["Z-score (> 2.8)", "IQR (1.5x)", "Isolation Forest"]
+    methods_used = ["Z-score (> 2.5)", "Tukey IQR (1.5x)", "Modified Z-Score / MAD (> 3.0)"]
 
-    for idx, (orig_idx, actual_val) in enumerate(series.items()):
+    for orig_idx, actual_val in series.items():
         actual_val = float(actual_val)
         z_score = abs((actual_val - mean_val) / std_val)
         is_iqr_outlier = (actual_val < q25 - 1.5 * iqr) or (actual_val > q75 + 1.5 * iqr)
-        is_iso_outlier = (iso_preds[idx] == -1)
+        
+        # Modified Z-score (Iglewicz and Hoaglin)
+        mod_z = 0.6745 * abs(actual_val - median_val) / max(mad, 1e-9)
+        is_mad_outlier = (mod_z > 3.0)
 
         # Flag if flagged by at least 2 methods or extreme Z-score (> 3.0)
-        flags = sum([z_score > 2.5, is_iqr_outlier, is_iso_outlier])
-        if flags >= 2 or z_score > 3.0:
+        flags = sum([z_score > 2.5, is_iqr_outlier, is_mad_outlier])
+        if flags >= 2 or z_score > 3.0 or mod_z > 4.0:
             dev_pct = round(((actual_val - mean_val) / mean_val) * 100, 1) if mean_val != 0 else 0.0
             
             # Severity classification
-            if z_score > 4.0 or abs(dev_pct) > 300:
+            if z_score > 4.0 or mod_z > 5.0 or abs(dev_pct) > 300:
                 severity = "Critical"
-            elif z_score > 3.0 or abs(dev_pct) > 150:
+            elif z_score > 3.0 or mod_z > 3.5 or abs(dev_pct) > 150:
                 severity = "High"
             else:
                 severity = "Medium"
@@ -76,7 +82,7 @@ def detect_anomalies(df: pd.DataFrame, metric_col: Optional[str] = None, id_col:
 
             cause = (
                 f"Extreme {direction} in {metric_col} ({abs(dev_pct)}% from mean {mean_val:,.2f}). "
-                f"Z-score = {z_score:.2f}."
+                f"Z-score = {z_score:.2f}, Modified Z = {mod_z:.2f}."
             )
             recom = (
                 f"Audit transaction record {ident_val} for bulk discounts, data entry typo, system glitch, or fraud."
@@ -105,7 +111,7 @@ def detect_anomalies(df: pd.DataFrame, metric_col: Optional[str] = None, id_col:
 
     summary = (
         f"Detected {len(anomalies)} statistical anomalies across {len(series):,} records for metric '{metric_col}'. "
-        f"{critical_count} critical deviations exceed 4 standard deviations from normal expected baseline."
+        f"{critical_count} critical deviations exceed statistical anomaly boundaries from normal expected baseline."
     )
 
     return AnomalyResult(

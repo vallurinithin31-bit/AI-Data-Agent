@@ -6,8 +6,16 @@ import traceback
 from typing import Dict, Any, Tuple, Optional
 import pandas as pd
 import numpy as np
-import scipy
-import sklearn
+
+try:
+    import scipy
+except ImportError:
+    scipy = None
+
+try:
+    import sklearn
+except ImportError:
+    sklearn = None
 
 # Safe builtins allowed in the analysis sandbox
 SAFE_BUILTINS = {
@@ -68,11 +76,13 @@ def execute_sandboxed_python(code: str, df: pd.DataFrame, context_vars: Optional
         '__builtins__': SAFE_BUILTINS,
         'pd': pd,
         'np': np,
-        'scipy': scipy,
-        'sklearn': sklearn,
         'df': df_copy,
         'result': None
     }
+    if scipy is not None:
+        execution_context['scipy'] = scipy
+    if sklearn is not None:
+        execution_context['sklearn'] = sklearn
     
     if context_vars:
         execution_context.update(context_vars)

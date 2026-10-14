@@ -1,8 +1,7 @@
+from typing import Optional, List, Dict, Any, Tuple
 import pandas as pd
 import numpy as np
-from typing import Optional, List, Dict, Any, Tuple
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
+
 from backend.app.schemas.analysis import SegmentationResult, CustomerSegment
 
 def perform_rfm_segmentation(df: pd.DataFrame, cust_col: str, date_col: str, amount_col: str) -> SegmentationResult:
@@ -124,11 +123,37 @@ def perform_kmeans_clustering(df: pd.DataFrame, feature_cols: List[str], n_clust
     if len(clean_df) < n_clusters * 3:
         raise ValueError(f"Insufficient samples ({len(clean_df)}) for {n_clusters} clusters.")
         
-    scaler = StandardScaler()
-    scaled_data = scaler.fit_transform(clean_df)
+    # Standardize data in pure numpy/pandas
+    mean_vals = clean_df.mean()
+    std_vals = clean_df.std().replace(0, 1.0)
+    scaled_data = ((clean_df - mean_vals) / std_vals).values.astype(float)
     
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
-    clean_df['Cluster'] = kmeans.fit_predict(scaled_data)
+    # Pure numpy K-Means++ implementation
+    rng = np.random.default_rng(42)
+    n_samples = len(scaled_data)
+    
+    # K-means++ initialization
+    init_indices = [int(rng.choice(n_samples))]
+    for _ in range(1, n_clusters):
+        dists = np.min([np.sum((scaled_data - scaled_data[idx]) ** 2, axis=1) for idx in init_indices], axis=0)
+        p = dists / max(1e-12, float(dists.sum()))
+        init_indices.append(int(rng.choice(n_samples, p=p)))
+        
+    centroids = scaled_data[init_indices].copy()
+    cluster_labels = np.zeros(n_samples, dtype=int)
+    
+    for _ in range(50):
+        dists = np.linalg.norm(scaled_data[:, np.newaxis] - centroids, axis=2)
+        new_labels = np.argmin(dists, axis=1)
+        if np.array_equal(cluster_labels, new_labels):
+            break
+        cluster_labels = new_labels
+        for k in range(n_clusters):
+            mask = (cluster_labels == k)
+            if np.any(mask):
+                centroids[k] = scaled_data[mask].mean(axis=0)
+
+    clean_df['Cluster'] = cluster_labels
     
     segments: List[CustomerSegment] = []
     total = len(clean_df)
